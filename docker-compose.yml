@@ -24,7 +24,7 @@ services:
       - DB_HOST=mysql
       - DB_USER=user
       - DB_PASSWORD=password
-      - DB_NAME=appdb
+      - DB_NAME=restaurante
     depends_on:
       - mysql
 
