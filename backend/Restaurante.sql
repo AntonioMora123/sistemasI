@@ -277,8 +277,8 @@ BEGIN
 
       SET v_idUsuario = LAST_INSERT_ID();
 
-      INSERT INTO empleados (idUsuario, domicilio, sexo, fecha_nacimiento, estado_civil, curp, puesto, salario, activo)
-      VALUES (v_idUsuario, p_domicilio, p_sexo, p_fecha_nacimiento, p_estado_civil, p_curp, p_puesto, p_salario, TRUE);
+      INSERT INTO empleados (idUsuario, domicilio, sexo,  estado_civil, curp, puesto, salario, activo)
+      VALUES (v_idUsuario, p_domicilio, p_sexo, p_estado_civil, p_curp, p_puesto, p_salario, TRUE);
 
       -- Asignar rol empleado (si no existe el rol 2, no falla pero registrará)
       INSERT INTO usuarios_roles (idUsuario, idRol, rol_activo) VALUES (v_idUsuario, 2, TRUE);
