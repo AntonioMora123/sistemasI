@@ -26,7 +26,6 @@ CREATE TABLE empleados (
   idUsuario INT NOT NULL,
   domicilio VARCHAR(255),
   sexo ENUM('M','F','Otro'),
-  fecha_nacimiento DATE,
   estado_civil VARCHAR(50),
   curp VARCHAR(18),
   puesto VARCHAR(100),
@@ -194,14 +193,26 @@ CREATE TABLE notificaciones (
   FOREIGN KEY (idUsuario) REFERENCES usuarios(idUsuario)
 ) ENGINE=InnoDB;
 
-------------------Modificaciones de tablas existentes ------------------
 ALTER TABLE empleados ADD activo BOOLEAN DEFAULT TRUE;
 ALTER TABLE roles ADD activo BOOLEAN DEFAULT TRUE;
 ALTER TABLE ingredientes ADD activo BOOLEAN DEFAULT TRUE;
 ALTER TABLE recetas ADD activo BOOLEAN DEFAULT TRUE;
-ALTER TABLE empleados DROP COLUMN fecha_nacimiento;
+ALTER TABLE productos_almacen ADD stock DOUBLE DEFAULT 0;
 
-------------------Stored Procedures ------------------
+
+
+
+
+—-------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
 USE restaurante;
 
 -- BORRAR procedimientos previos (opcional pero recomendable)
@@ -277,7 +288,7 @@ BEGIN
 
       SET v_idUsuario = LAST_INSERT_ID();
 
-      INSERT INTO empleados (idUsuario, domicilio, sexo,  estado_civil, curp, puesto, salario, activo)
+      INSERT INTO empleados (idUsuario, domicilio, sexo, estado_civil, curp, puesto, salario, activo)
       VALUES (v_idUsuario, p_domicilio, p_sexo, p_estado_civil, p_curp, p_puesto, p_salario, TRUE);
 
       -- Asignar rol empleado (si no existe el rol 2, no falla pero registrará)
@@ -411,6 +422,85 @@ BEGIN
     END IF;
 
     UPDATE usuarios SET activo = TRUE WHERE idUsuario = p_idUsuario;
+    SELECT ROW_COUNT() AS registros_afectados;
+END$$
+
+
+/*
+  ROLES y USUARIOS_ROLES
+*/
+CREATE PROCEDURE agregar_rol (
+    IN p_nombre_rol VARCHAR(50)
+)
+BEGIN
+    INSERT INTO roles (nombre_rol, activo) VALUES (p_nombre_rol, TRUE);
+    SELECT LAST_INSERT_ID() AS idRol_creado;
+END$$
+
+CREATE PROCEDURE editar_rol (
+    IN p_idRol INT,
+    IN p_nombre_rol VARCHAR(50),
+    IN p_activo TINYINT
+)
+BEGIN
+    IF (SELECT COUNT(*) FROM roles WHERE idRol = p_idRol) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Rol no existe';
+    END IF;
+
+    UPDATE roles
+    SET nombre_rol = p_nombre_rol,
+        activo = (p_activo = 1)
+    WHERE idRol = p_idRol;
+
+    SELECT ROW_COUNT() AS registros_afectados;
+END$$
+
+CREATE PROCEDURE desactivar_rol (IN p_idRol INT)
+BEGIN
+    IF (SELECT COUNT(*) FROM roles WHERE idRol = p_idRol) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Rol no existe';
+    END IF;
+
+    UPDATE roles SET activo = FALSE WHERE idRol = p_idRol;
+    -- desactivar asignaciones
+    UPDATE usuarios_roles SET rol_activo = FALSE WHERE idRol = p_idRol;
+    SELECT ROW_COUNT() AS registros_afectados;
+END$$
+
+CREATE PROCEDURE asignar_rol (
+    IN p_idUsuario INT,
+    IN p_idRol INT
+)
+BEGIN
+    IF (SELECT COUNT(*) FROM usuarios WHERE idUsuario = p_idUsuario) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Usuario no existe';
+    END IF;
+    IF (SELECT COUNT(*) FROM roles WHERE idRol = p_idRol) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Rol no existe';
+    END IF;
+
+    -- si ya existe, reactiva; si no, inserta
+    IF (SELECT COUNT(*) FROM usuarios_roles WHERE idUsuario = p_idUsuario AND idRol = p_idRol) > 0 THEN
+        UPDATE usuarios_roles SET rol_activo = TRUE, fecha_asignacion = CURRENT_TIMESTAMP
+        WHERE idUsuario = p_idUsuario AND idRol = p_idRol;
+    ELSE
+        INSERT INTO usuarios_roles (idUsuario, idRol, rol_activo) VALUES (p_idUsuario, p_idRol, TRUE);
+    END IF;
+
+    SELECT 'OK' AS resultado;
+END$$
+
+CREATE PROCEDURE remover_rol (
+    IN p_idUsuario INT,
+    IN p_idRol INT
+)
+BEGIN
+    IF (SELECT COUNT(*) FROM usuarios_roles WHERE idUsuario = p_idUsuario AND idRol = p_idRol) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Asignación no existe';
+    END IF;
+
+    -- soft remove => rol_activo = FALSE
+    UPDATE usuarios_roles SET rol_activo = FALSE WHERE idUsuario = p_idUsuario AND idRol = p_idRol;
     SELECT ROW_COUNT() AS registros_afectados;
 END$$
 
@@ -777,69 +867,6 @@ END$$
 
 
 /*
-  VENTAS y DETALLE_VENTA
-  - crear_venta: crea venta y puede agregar detalles en transacción
-  - agregar_detalle_venta: inserta detalle y opcionalmente registra movimientos de inventario (salida)
-*/
-CREATE PROCEDURE crear_venta (
-    IN p_idUsuario INT,
-    IN p_total DECIMAL(10,2),
-    IN p_iva DECIMAL(10,2),
-    IN p_ieps DECIMAL(10,2),
-    IN p_metodo_pago VARCHAR(50)
-)
-BEGIN
-    DECLARE v_idVenta INT;
-    IF (SELECT COUNT(*) FROM usuarios WHERE idUsuario = p_idUsuario AND activo = TRUE) = 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Usuario no existe o está inactivo';
-    END IF;
-
-    IF p_metodo_pago NOT IN ('Efectivo','Tarjeta','Transferencia') THEN
-        SET p_metodo_pago = NULL;
-    END IF;
-
-    INSERT INTO ventas (idUsuario, total, iva, ieps, metodo_pago)
-    VALUES (p_idUsuario, p_total, p_iva, p_ieps, p_metodo_pago);
-
-    SET v_idVenta = LAST_INSERT_ID();
-    SELECT v_idVenta AS idVenta_creada;
-END$$
-
-/*
-  Agregar detalle de venta:
-  - registra detalle_venta
-  - opcional: registra movimiento de inventario para cada ingrediente usado
-    (esto requiere que se defina una conversión receta -> ingredientes -> productos_almacen)
-  - Para simplicidad: solo inserta detalle_venta y actualiza subtotal.
-*/
-CREATE PROCEDURE agregar_detalle_venta (
-    IN p_idVenta INT,
-    IN p_idReceta INT,
-    IN p_cantidad INT,
-    IN p_subtotal DECIMAL(10,2)
-)
-BEGIN
-    IF (SELECT COUNT(*) FROM ventas WHERE idVenta = p_idVenta) = 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Venta no existe';
-    END IF;
-    IF (SELECT COUNT(*) FROM recetas WHERE idReceta = p_idReceta AND activo = TRUE) = 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Receta no existe o está inactiva';
-    END IF;
-    IF p_cantidad <= 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cantidad debe ser > 0';
-    END IF;
-
-    INSERT INTO detalle_venta (idVenta, idReceta, cantidad, subtotal)
-    VALUES (p_idVenta, p_idReceta, p_cantidad, p_subtotal);
-
-    -- actualizar totales (simple): recalcula total en ventas sumando subtotales
-    UPDATE ventas
-    SET total = COALESCE((SELECT SUM(subtotal) FROM detalle_venta WHERE idVenta = p_idVenta),0)
-    WHERE idVenta = p_idVenta;
-END$$
-
-
-/*
   CIERRE DE CAJA
 */
 CREATE PROCEDURE crear_cierre_caja (
@@ -892,4 +919,146 @@ BEGIN
 END$$
 
 DELIMITER ;
--- =====================
+
+
+
+
+
+
+
+
+DROP PROCEDURE IF EXISTS agregar_producto_almacen;
+DELIMITER $$
+
+CREATE PROCEDURE agregar_producto_almacen (
+    IN p_nombre VARCHAR(150),
+    IN p_unidad_medida VARCHAR(20),
+    IN p_fecha_caducidad DATE,
+    IN p_precio_unitario DECIMAL(10,2),
+    IN p_idProveedor INT,
+    IN p_cantidad DOUBLE,
+    IN p_idUsuario INT
+)
+BEGIN
+    -- Validar proveedor
+    IF p_idProveedor IS NOT NULL AND (SELECT COUNT(*) FROM proveedores WHERE idProveedor = p_idProveedor) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Proveedor no existe';
+    END IF;
+
+    -- Insertar producto
+    INSERT INTO productos_almacen (nombre, unidad_medida, fecha_caducidad, precio_unitario, idProveedor, estado, stock_actual)
+    VALUES (p_nombre, p_unidad_medida, p_fecha_caducidad, p_precio_unitario, p_idProveedor, 'Activo', p_cantidad);
+
+    SET @idProducto := LAST_INSERT_ID();
+
+    -- Registrar movimiento (entrada inicial)
+    INSERT INTO movimientos_inventario (idProductoAlmacen, tipo_movimiento, cantidad, idUsuario)
+    VALUES (@idProducto, 'Entrada', p_cantidad, p_idUsuario);
+
+    SELECT @idProducto AS idProductoAlmacen_creado;
+END $$
+
+DELIMITER ;
+
+
+DELIMITER $$
+
+CREATE PROCEDURE crear_venta (
+    IN p_idUsuario INT,
+    IN p_metodo_pago VARCHAR(20)
+)
+BEGIN
+    INSERT INTO ventas (idUsuario, metodo_pago, total, iva, ieps)
+    VALUES (p_idUsuario, p_metodo_pago, 0, 0, 0);
+
+    SELECT LAST_INSERT_ID() AS idVenta_creada;
+END $$
+
+DELIMITER ;
+
+
+
+DELIMITER $$
+
+CREATE PROCEDURE agregar_detalle_venta (
+    IN p_idVenta INT,
+    IN p_idReceta INT,
+    IN p_cantidad INT
+)
+BEGIN
+    DECLARE v_precio DECIMAL(10,2);
+    DECLARE v_subtotal DECIMAL(10,2);
+    DECLARE v_iva DECIMAL(10,2);
+    DECLARE v_ieps DECIMAL(10,2);
+
+    -- precio de receta
+    SELECT precio INTO v_precio
+    FROM recetas
+    WHERE idReceta = p_idReceta;
+
+    IF v_precio IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La receta no existe';
+    END IF;
+
+    SET v_subtotal = v_precio * p_cantidad;
+    SET v_iva = v_subtotal * 0.16;
+    SET v_ieps = v_subtotal * 0.05;
+
+    -- insertar detalle
+    INSERT INTO detalle_venta (idVenta, idReceta, cantidad, subtotal)
+    VALUES (p_idVenta, p_idReceta, p_cantidad, v_subtotal);
+
+    -- actualizar totales
+    UPDATE ventas
+    SET total = total + v_subtotal + v_iva + v_ieps,
+        iva = iva + v_iva,
+        ieps = ieps + v_ieps
+    WHERE idVenta = p_idVenta;
+END $$
+
+DELIMITER ;
+
+DELIMITER $$
+
+CREATE TRIGGER trg_descuento_inventario
+AFTER INSERT ON detalle_venta
+FOR EACH ROW
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE v_idIngrediente INT;
+    DECLARE v_cantidadNecesaria DOUBLE;
+    DECLARE cur CURSOR FOR
+        SELECT idIngrediente, cantidad
+        FROM recetas_ingredientes
+        WHERE idReceta = NEW.idReceta;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    OPEN cur;
+
+    read_loop: LOOP
+        FETCH cur INTO v_idIngrediente, v_cantidadNecesaria;
+        IF done THEN LEAVE read_loop; END IF;
+
+        -- obtener producto del almacén
+        UPDATE productos_almacen AS p
+        JOIN ingredientes AS i ON p.idProductoAlmacen = i.idProductoAlmacen
+        SET p.stock = p.stock - (v_cantidadNecesaria * NEW.cantidad)
+        WHERE i.idIngrediente = v_idIngrediente;
+
+        -- registrar movimiento
+        INSERT INTO movimientos_inventario (
+            idProductoAlmacen, tipo_movimiento, cantidad, idUsuario
+        )
+        SELECT i.idProductoAlmacen, 'Salida', (v_cantidadNecesaria * NEW.cantidad), NULL
+        FROM ingredientes i
+        WHERE i.idIngrediente = v_idIngrediente;
+    END LOOP;
+
+    CLOSE cur;
+END $$
+
+DELIMITER ;
+
+
+
