@@ -90,8 +90,15 @@ CALL obtener_proveedores(1);
 
 -- Agregar producto al almacén
 CALL agregar_producto_almacen(
-    'Tomate', 'kg', '2025-01-10', 25.50, 1
+    'Tomate',
+    'kg',
+    '2025-01-10',
+    25.50,
+    1,          -- idProveedor
+    100,        -- cantidad (stock inicial)
+    1           -- idUsuario que registra
 );
+
 
 -- Editar producto
 CALL editar_producto_almacen(
@@ -111,7 +118,8 @@ CALL desactivar_producto_almacen(1);
 CALL agregar_ingrediente(1);
 
 -- Editar ingrediente
-CALL editar_ingrediente(1, 2);
+CALL editar_ingrediente(1, 2, 1);
+
 
 -- Desactivar ingrediente
 CALL desactivar_ingrediente(1);
@@ -156,7 +164,13 @@ CALL obtener_stock_producto(1);
 -- ===========================
 
 -- Crear orden de compra
-CALL crear_orden_compra(1, '2025-02-12');
+CALL crear_orden_compra(
+    1,               -- idProveedor
+    '2025-02-12',    -- fecha
+    1500.00,         -- total
+    'Pendiente'      -- estado
+);
+
 
 -- Agregar detalle a orden
 CALL agregar_detalle_orden(1, 1, 20, 25.50);

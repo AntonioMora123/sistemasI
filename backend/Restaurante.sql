@@ -946,7 +946,7 @@ BEGIN
     END IF;
 
     -- Insertar producto
-    INSERT INTO productos_almacen (nombre, unidad_medida, fecha_caducidad, precio_unitario, idProveedor, estado, stock_actual)
+    INSERT INTO productos_almacen (nombre, unidad_medida, fecha_caducidad, precio_unitario, idProveedor, estado, stock)
     VALUES (p_nombre, p_unidad_medida, p_fecha_caducidad, p_precio_unitario, p_idProveedor, 'Activo', p_cantidad);
 
     SET @idProducto := LAST_INSERT_ID();
