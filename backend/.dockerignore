@@ -1,8 +1,9 @@
 node_modules
 npm-debug.log
+.env.local
 .git
 .gitignore
 README.md
-build
-.env.local
+.nyc_output
+coverage
 .DS_Store

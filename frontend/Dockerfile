@@ -2,17 +2,24 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copiar package.json y package-lock.json
+# Instalar dependencias del sistema
+RUN apk add --no-cache git
+
+# Copiar package files
 COPY package*.json ./
 
 # Instalar dependencias
-RUN npm install
+RUN npm ci
 
-# Copiar el resto del código
+# Copiar código fuente
 COPY . .
 
-# Exponer el puerto 3000
+# Crear usuario no-root
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S reactapp -u 1001
+RUN chown -R reactapp:nodejs /app
+USER reactapp
+
 EXPOSE 3000
 
-# Comando para iniciar la aplicación
 CMD ["npm", "start"]
